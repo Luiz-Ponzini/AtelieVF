@@ -1,7 +1,7 @@
 from services.supabase_client import supabase
 
-icon = "logo_icon.png"
-logo = "logo.png"
+icon = "assets/logo_icon.png"
+logo = "assets/logo.png"
 
 
 # ---------------------------
