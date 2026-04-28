@@ -1,5 +1,8 @@
 from services.supabase_client import supabase
 
+icon = "logo_icon.png"
+logo = "logo.png"
+
 
 # ---------------------------
 # PRODUTOS
