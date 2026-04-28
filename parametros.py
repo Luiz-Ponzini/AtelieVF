@@ -78,7 +78,7 @@ with st.expander("💸 Parâmetros de custo", expanded=False):
 
 with st.expander("📟 Simulador de Preço", expanded=False):
     t = st.selectbox("Tamanho", ["PP", "P", "M", "G", "GG"])
-    p = st.number_input("Peso (Kg)", min_value=0.1, step=0.1, value=0.5)
+    p = st.number_input("Peso (Kg)", min_value=0.1, step=0.1, value=0.5, format=%.3f)
 
     custo_novo = calcular_custo_unitario(t, p, parametros)
     preco_venda_novo = calcular_preco_venda_estimado(custo_novo, parametros)
