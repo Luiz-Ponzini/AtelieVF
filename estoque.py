@@ -11,7 +11,7 @@ st.set_page_config(layout="wide")
 # ---------------------------
 # DADOS (SUPABASE)
 # ---------------------------
-produtos = supabase.schema("public").from_("produtos").select("*").execute().data
+produtos = supabase.table("produtos").select("*").execute().data
 entradas = supabase.table("entradas_estoque").select("*").execute().data
 vendas = supabase.table("vendas").select("*").execute().data
 
