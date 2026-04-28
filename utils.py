@@ -8,7 +8,7 @@ logo = "logo.png"
 # PRODUTOS
 # ---------------------------
 def get_produtos():
-    res = supabase.table("produtos_completos").select("*").execute()
+    res = supabase.table("produtos").select("*").execute()
     return res.data
 
 
