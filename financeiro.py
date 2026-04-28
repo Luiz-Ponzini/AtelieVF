@@ -1,104 +1,117 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from utils import get_produtos, get_vendas, insert_venda, icon
-
+from utils import supabase, get_produtos_com_estoque, get_next_id, icon
 
 st.set_page_config(layout="wide")
+produtos = get_produtos_com_estoque()
+vendas = supabase.table("vendas").select("*").execute().data or []
 
-
-produtos = get_produtos()
-vendas = get_vendas()
-
-
-# recalcular estoque (simples em memória)
-df_p = pd.DataFrame(produtos)
-df_v = pd.DataFrame(vendas)
-
-if not df_p.empty:
-    vend = df_v.groupby("produto_id")["quantidade"].sum() if not df_v.empty else 0
-    df_p["estoque_atual"] = df_p["id"].map(vend).fillna(0).rsub(df_p.get("estoque_atual", 0))
-
-# HEADER
 a, b = st.columns([1, 10])
-
 with a:
     st.image(icon, width=100)
-
 with b:
     st.title("💰 Vendas e Indicadores")
 
-
-disponiveis = df_p[df_p.get("estoque_atual", 0) > 0].to_dict("records")
-
+# só produtos com estoque > 0 e ativos
+disponiveis = [p for p in produtos if p.get("ativo", True) and int(p.get("estoque_atual", 0)) > 0]
 col1, col2 = st.columns([1, 2])
 
-
-# ---------------------------
-# NOVA VENDA
-# ---------------------------
 with col1:
     st.subheader("💵 Nova venda")
-
     if not disponiveis:
-        st.info("Sem estoque.")
+        st.info("Nenhum produto disponível em estoque para venda.")
     else:
         prod = st.selectbox(
             "Produto",
-            disponiveis,
-            format_func=lambda p: f'{p["id"]} — {p["nome"]}'
+            options=disponiveis,
+            format_func=lambda p: f'{p["id"]} — {p["nome"]} (Estoque: {p["estoque_atual"]})'
         )
 
-        with st.form("venda"):
-            qtd = st.number_input("Quantidade", 1, int(prod["estoque_atual"]), 1)
-            preco = st.number_input("Preço unitário", 0.0, step=10.0)
-            data = st.date_input("Data", value=date.today())
-            obs = st.text_input("Obs")
+        estoque_max = int(prod.get("estoque_atual", 0))
+        custo_unit = float(prod.get("custo_unitario", 0) or 0)
+        preco_est_venda = float(prod.get("preco_venda_estimado", 0) or 0)
 
-            ok = st.form_submit_button("Registrar", type="primary")
+        with st.form("form_venda"):
+            st.number_input("Custo unitário (referência)", value=custo_unit, disabled=True)
+            st.number_input("Preço estimado de venda (referência)", value=preco_est_venda, disabled=True)
 
-        if ok:
-            insert_venda({
-                "produto_id": prod["id"],
-                "quantidade": int(qtd),
-                "preco_unitario_vendido": float(preco),
-                "valor_total": float(preco * qtd),
-                "data_venda": data.strftime("%Y-%m-%d"),
-                "observacao": obs
-            })
+            quantidade = st.number_input("Quantidade vendida", min_value=1, max_value=max(1, estoque_max), step=1, value=1)
+            preco_unit = st.number_input("Preço unitário vendido (R$)", min_value=0.0, step=10.0, value=0.0)
+            data_venda = st.date_input("Data da venda", value=date.today())
+            obs = st.text_input("Observação (opcional)")
 
-            st.success("Venda registrada")
-            st.rerun()
+            vender = st.form_submit_button("Registrar venda", type="primary")
 
+        if vender:
+            if int(quantidade) > estoque_max:
+                st.error(f"Estoque insuficiente. Disponível: {estoque_max}")
+            else:
+                vid = get_next_id("vendas")
+                valor_total = round(float(preco_unit) * int(quantidade), 2)
 
-# ---------------------------
-# TABELA
-# ---------------------------
+                nova_venda = {
+                    "id": vid,
+                    "produto_id": prod["id"],
+                    "data_venda": data_venda.strftime("%Y-%m-%d"),
+                    "quantidade": int(quantidade),
+                    "preco_unitario_vendido": float(preco_unit),
+                    "custo_unitario_snapshot": custo_unit,
+                    "valor_total": float(valor_total),
+                    "observacao": obs.strip()
+                }
+
+                supabase.table("vendas").insert(nova_venda).execute()
+                st.success("✅ Venda registrada! Estoque atualizado.")
+                st.rerun()
+
 with col2:
-    st.subheader("📋 Vendas")
-
-    if df_v.empty:
-        st.info("Sem vendas")
+    if not vendas:
+        st.info("Ainda não há vendas registradas.")
     else:
-        df_show = df_v.merge(
-            df_p[["id", "nome"]],
-            left_on="produto_id",
-            right_on="id",
-            how="left"
+        dfv = pd.DataFrame(vendas)
+        dfp = pd.DataFrame(produtos)[["id", "nome"]].rename(
+            columns={"id": "produto_id", "nome": "produto_nome"}
         )
 
-        st.dataframe(df_show, use_container_width=True)
+        dfv = dfv.merge(dfp, on="produto_id", how="left")
+        col_order = ["data_venda", "produto_nome", "quantidade", "preco_unitario_vendido", "custo_unitario_snapshot", "valor_total", "observacao"]
+        col_order = [c for c in col_order if c in dfv.columns]
+        dfv = dfv[col_order]
 
+        st.subheader("🧾 Tabela de vendas")
+        st.dataframe(dfv.sort_values("data_venda", ascending=False), width="stretch", height=665, hide_index=True)
 
-# ---------------------------
-# INDICADORES
-# ---------------------------
 st.divider()
 st.subheader("📊 Indicadores")
 
-if not df_v.empty:
-    total = df_v["valor_total"].sum()
-    qtd = df_v["quantidade"].sum()
+if not vendas:
+    st.info("Ainda não há vendas registradas.")
+else:
+    dfv["quantidade"] = dfv.get("quantidade", 1).fillna(0).astype(int)
+    
+    if "valor_total" not in dfv.columns:
+        if "preco_unitario_vendido" in dfv.columns:
+            dfv["valor_total"] = dfv["preco_unitario_vendido"].fillna(0).astype(float) * dfv["quantidade"]
+        else:
+            dfv["valor_total"] = 0.0
+    dfv["valor_total"] = dfv["valor_total"].fillna(0).astype(float)
+    dfv["custo_unitario_snapshot"] = dfv.get("custo_unitario_snapshot", 0).fillna(0).astype(float)
+    dfv["data_venda"] = pd.to_datetime(dfv.get("data_venda"), errors="coerce")
 
-    st.metric("Total vendido", f"R$ {total:,.2f}")
-    st.metric("Peças vendidas", int(qtd))
+    total_vendido = float(dfv["valor_total"].sum())
+    custo_total = float((dfv["custo_unitario_snapshot"] * dfv["quantidade"]).sum())
+    lucro_total = round(total_vendido - custo_total, 2)
+    pecas_vendidas = int(dfv["quantidade"].sum())
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total vendido", f"R$ {total_vendido:,.2f}")
+    c2.metric("Lucro (venda − custo)", f"R$ {lucro_total:,.2f}")
+    c3.metric("Peças vendidas", f"{pecas_vendidas}")
+
+    df_month = dfv.dropna(subset=["data_venda"]).copy()
+    if not df_month.empty:
+        df_group = df_month.groupby(df_month["data_venda"].dt.to_period("M"))["valor_total"].sum()
+        df_group.index = df_group.index.to_timestamp()
+        st.subheader("📈 Vendas por mês")
+        st.line_chart(df_group)
