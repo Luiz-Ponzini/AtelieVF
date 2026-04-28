@@ -4,11 +4,10 @@ from datetime import date
 
 from utils import (
     get_produtos,
-    insert_produto,
-    update_produto,
-    insert_entrada,
+    criar_produto,
+    atualizar_produto,
+    registrar_entrada,
     get_entradas,
-    recalcular_estoque,
     calcular_custo_unitario,
     calcular_preco_venda_estimado,
     icon
