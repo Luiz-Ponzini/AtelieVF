@@ -1,187 +1,160 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-
 from utils import (
-    get_produtos,
-    criar_produto,
-    atualizar_produto,
-    registrar_entrada,
-    get_entradas,
-    calcular_custo_unitario,
-    calcular_preco_venda_estimado,
-    icon
+    supabase, get_parametros, get_produtos_com_estoque, get_next_id,
+    calcular_custo_unitario, calcular_preco_venda_estimado, logo
 )
 
 st.set_page_config(layout="wide")
+parametros = get_parametros()
+produtos = get_produtos_com_estoque()
 
+tipos_peca = parametros["tipos_peca"] or ["Prato", "Tigela", "Copo", "Vaso"] # Fallback se base vazia
+tamanho_peca = parametros["tamanho_peca"]
 
-# ---------------------------
-# DATA
-# ---------------------------
-produtos = get_produtos()
-entradas = get_entradas()
-
-df_prod = pd.DataFrame(produtos)
-
-
-# recalcula estoque em memória
-if not df_prod.empty:
-    df_ent = pd.DataFrame(entradas)
-
-    if not df_ent.empty:
-        ent = df_ent.groupby("produto_id")["quantidade"].sum()
-    else:
-        ent = pd.Series(dtype=int)
-
-    df_prod["estoque_atual"] = df_prod["id"].map(ent).fillna(0).astype(int)
-
-
-# ---------------------------
-# HEADER
-# ---------------------------
 a, b, c = st.columns([2, 1, 2])
-
 with b:
-    st.image(icon, width=400)
-
+    st.image(logo, width=400)
 
 col1, col2 = st.columns(2)
 
-
-# =========================================================
-# COLUNA 1 — CADASTRO
-# =========================================================
 with col1:
     st.title("📝 Cadastro de Produtos + Produção")
 
-    with st.expander("➕ Abrir formulário de cadastro"):
+    with st.expander("➕ Abrir formulário de cadastro", expanded=False):
+        nome = st.text_input("Nome do produto (ex.: Prato Azul Gaia)")
+        tipo = st.selectbox("Tipo da peça", options=tipos_peca + ["Criar novo tipo..."])
+        if tipo == "Criar novo tipo...":
+            tipo = st.text_input("Digite o novo tipo")
+            
+        tamanho = st.selectbox("Tamanho", options=tamanho_peca)
+        peso = st.number_input("Peso unitário (Kg)", min_value=0.1, step=0.001, value=0.5, format="%.3f")
 
-        nome = st.text_input("Nome do produto")
-        tipo = st.text_input("Tipo da peça")
-        tamanho = st.text_input("Tamanho")
-
-        peso = st.number_input(
-            "Peso unitário (Kg)",
-            min_value=0.1,
-            step=0.001,
-            value=0.5,
-            format="%.3f"
-        )
-
+        custo_calc = calcular_custo_unitario(tamanho, peso, parametros)
+        preco_venda_calc = calcular_preco_venda_estimado(custo_calc, parametros)
         data_producao = st.date_input("Data da produção", value=date.today())
-
-        qtd_inicial = st.number_input("Quantidade inicial", min_value=0, step=1)
-
-        # cálculo ao vivo
-        custo_calc = calcular_custo_unitario(tamanho, peso, {})
-        preco_calc = calcular_preco_venda_estimado(custo_calc, {})
+        quantidade_inicial = st.number_input("Quantidade produzida agora (entrada inicial)", min_value=0, step=1, value=0)
 
         col11, col12 = st.columns(2)
         with col11:
-            st.metric("Custo unitário", f"R$ {custo_calc:.2f}")
+            st.metric("Custo unitário (calculado, sem margem)", f"R$ {custo_calc:.2f}")
         with col12:
-            st.metric("Preço estimado", f"R$ {preco_calc:.2f}")
+            st.metric("Preço estimado de venda (com margem)", f"R$ {preco_venda_calc:.2f}")
 
-        if st.button("Adicionar produto", type="primary"):
+        enviar = st.button("Adicionar produto", type='primary')
 
-            novo = {
-                "nome": nome,
+        if enviar:
+            pid = get_next_id("produtos")
+            novo_prod = {
+                "id": pid,
+                "nome": nome.strip() or f"Produto {pid}",
                 "tipo_peca": tipo,
                 "tamanho": tamanho,
                 "peso_kg_unitario": float(peso),
                 "custo_unitario": float(custo_calc),
-                "preco_venda_estimado": float(preco_calc),
-                "ativo": True
+                "preco_venda_estimado": float(preco_venda_calc),
+                "ativo": True,
+                "data_cadastro": data_producao.strftime("%Y-%m-%d")
             }
+            supabase.table("produtos").insert(novo_prod).execute()
 
-            resp = insert_produto(novo)
-            prod_id = resp.data[0]["id"]
-
-            # entrada inicial
-            if qtd_inicial > 0:
-                insert_entrada({
-                    "produto_id": prod_id,
-                    "quantidade": int(qtd_inicial),
+            if quantidade_inicial > 0:
+                eid = get_next_id("entradas_estoque")
+                nova_entrada = {
+                    "id": eid,
+                    "produto_id": pid,
                     "data": data_producao.strftime("%Y-%m-%d"),
+                    "quantidade": int(quantidade_inicial),
                     "tipo": "producao",
-                    "observacao": "Entrada inicial"
-                })
+                    "observacao": "Entrada inicial no cadastro"
+                }
+                supabase.table("entradas_estoque").insert(nova_entrada).execute()
 
-            st.success("Produto criado!")
+            st.success("✅ Produto cadastrado! Estoque atualizado.")
             st.rerun()
 
-
-    # =========================================================
-    # EDIÇÃO
-    # =========================================================
-    st.divider()
-    st.subheader("✏️ Editar produto")
-
-    if df_prod.empty:
-        st.info("Sem produtos")
+    if not produtos:
+        st.info("Nenhum produto cadastrado ainda.")
     else:
+        with st.expander("✏️ Editar dados do produto", expanded=False):
+            prod_sel = st.selectbox(
+                "Selecione o produto",
+                options=produtos,
+                format_func=lambda p: f'{p["id"]} — {p.get("nome","")} (Estoque: {p.get("estoque_atual",0)})',
+                key="select_produto_edicao"
+            )
+            pid = prod_sel["id"]
 
-        prod = st.selectbox(
-            "Produto",
-            df_prod.to_dict("records"),
-            format_func=lambda p: f'{p["id"]} — {p["nome"]}'
-        )
+            nome_e = st.text_input("Nome", value=prod_sel.get("nome", ""), key=f"nome_{pid}")
+            tipo_e = st.selectbox("Tipo da peça", options=tipos_peca + ["Criar novo tipo..."], 
+                                  index=tipos_peca.index(prod_sel.get("tipo_peca")) if prod_sel.get("tipo_peca") in tipos_peca else 0, key=f"tipo_{pid}")
+            if tipo_e == "Criar novo tipo...":
+                tipo_e = st.text_input("Digite o novo tipo", key=f"tipo_novo_{pid}")
 
-        nome_e = st.text_input("Nome", prod["nome"])
-        tipo_e = st.text_input("Tipo", prod.get("tipo_peca", ""))
-        tamanho_e = st.text_input("Tamanho", prod.get("tamanho", ""))
-        peso_e = st.number_input(
-            "Peso",
-            value=float(prod.get("peso_kg_unitario", 0.5)),
-            step=0.001,
-            format="%.3f"
-        )
+            tamanho_e = st.selectbox("Tamanho", options=tamanho_peca, 
+                                     index=tamanho_peca.index(prod_sel.get("tamanho")) if prod_sel.get("tamanho") in tamanho_peca else 0, key=f"tamanho_{pid}")
 
-        custo_calc2 = calcular_custo_unitario(tamanho_e, peso_e, {})
-        preco_calc2 = calcular_preco_venda_estimado(custo_calc2, {})
+            peso_e = st.number_input("Peso unitário (Kg)", min_value=0.1, step=0.001, format="%.3f", value=float(prod_sel.get("peso_kg_unitario", 0.5)), key=f"peso_{pid}")
 
-        col11, col12 = st.columns(2)
-        with col11:
-            st.metric("Custo", f"R$ {custo_calc2:.2f}")
-        with col12:
-            st.metric("Preço", f"R$ {preco_calc2:.2f}")
+            custo_calc2 = calcular_custo_unitario(tamanho_e, peso_e, parametros)
+            preco_venda_calc2 = calcular_preco_venda_estimado(custo_calc2, parametros)
 
-        ativo = st.checkbox("Ativo", value=prod.get("ativo", True))
+            col11, col12 = st.columns(2)
+            with col11:
+                st.metric("Custo unitário (calculado, sem margem)", f"R$ {custo_calc2:.2f}")
+            with col12:
+                st.metric("Preço estimado de venda (com margem)", f"R$ {preco_venda_calc2:.2f}")
 
-        if st.button("Salvar alterações", type="primary"):
+            ativo_e = st.checkbox("Ativo", value=bool(prod_sel.get("ativo", True)), key=f"ativo_{pid}")
+            salvar_btn = st.button("Salvar alterações", type="primary", key=f"salvar_{pid}")
 
-            update_produto(prod["id"], {
-                "nome": nome_e,
-                "tipo_peca": tipo_e,
-                "tamanho": tamanho_e,
-                "peso_kg_unitario": float(peso_e),
-                "custo_unitario": float(custo_calc2),
-                "preco_venda_estimado": float(preco_calc2),
-                "ativo": ativo
-            })
+            if salvar_btn:
+                supabase.table("produtos").update({
+                    "nome": nome_e.strip() or prod_sel["nome"],
+                    "tipo_peca": tipo_e,
+                    "tamanho": tamanho_e,
+                    "peso_kg_unitario": float(peso_e),
+                    "custo_unitario": float(custo_calc2),
+                    "preco_venda_estimado": float(preco_venda_calc2),
+                    "ativo": bool(ativo_e)
+                }).eq("id", pid).execute()
+                
+                st.success("✅ Produto atualizado!")
+                st.rerun()
 
-            st.success("Atualizado!")
-            st.rerun()
+        with st.expander("📦 Adicionar produção (entrada de estoque)", expanded=False):
+            prod = st.selectbox(
+                "Selecione o produto",
+                options=produtos,
+                format_func=lambda p: f'{p["id"]} — {p.get("nome","")} (Estoque: {p.get("estoque_atual",0)})',
+                key="select_produto_estoque"
+            )
+            pid_estoque = prod["id"]
+            qtd = st.number_input("Quantidade produzida", min_value=1, step=1, value=1)
+            dt = st.date_input("Data da produção", value=date.today(), key="data_producao_add_producao")
+            obs = st.text_input("Observação (opcional)")
+            add = st.button("Registrar entrada")
 
+            if add:
+                eid = get_next_id("entradas_estoque")
+                nova_entrada = {
+                    "id": eid,
+                    "produto_id": pid_estoque,
+                    "data": dt.strftime("%Y-%m-%d"),
+                    "quantidade": int(qtd),
+                    "tipo": "producao",
+                    "observacao": obs.strip()
+                }
+                supabase.table("entradas_estoque").insert(nova_entrada).execute()
+                st.success("✅ Entrada registrada! Estoque atualizado.")
+                st.rerun()
 
-# =========================================================
-# COLUNA 2 — LISTAGEM
-# =========================================================
 with col2:
-    st.title("📋 Produtos")
-
-    if df_prod.empty:
-        st.info("Sem produtos")
+    st.title("📋 Produtos cadastrados")
+    if produtos:
+        df = pd.DataFrame(produtos)
+        colunas = ["nome", "tipo_peca", "tamanho", "peso_kg_unitario", "custo_unitario", "preco_venda_estimado", "estoque_atual", "ativo"]
+        st.dataframe(df[colunas], width="stretch", hide_index=True)
     else:
-        st.dataframe(
-            df_prod[
-                [
-                    "id", "nome", "tipo_peca", "tamanho",
-                    "peso_kg_unitario", "custo_unitario",
-                    "preco_venda_estimado", "estoque_atual", "ativo"
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True
-        )
+        st.info("Nenhum produto cadastrado.")
