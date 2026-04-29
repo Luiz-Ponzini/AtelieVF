@@ -29,7 +29,7 @@ with col1:
             tipo = st.text_input("Digite o novo tipo")
             
         tamanho = st.selectbox("Tamanho", options=tamanho_peca)
-        peso = st.number_input("Peso unitário (Kg)", min_value=0.1, step=0.001, value=0.5, format="%.3f")
+        peso = st.number_input("Peso unitário (Kg)", min_value=0.001, step=0.001, value=0.5, format="%.3f")
 
         custo_calc = calcular_custo_unitario(tamanho, peso, parametros)
         preco_venda_calc = calcular_preco_venda_estimado(custo_calc, parametros)
