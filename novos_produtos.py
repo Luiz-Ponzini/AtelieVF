@@ -95,7 +95,7 @@ with col1:
             tamanho_e = st.selectbox("Tamanho", options=tamanho_peca, 
                                      index=tamanho_peca.index(prod_sel.get("tamanho")) if prod_sel.get("tamanho") in tamanho_peca else 0, key=f"tamanho_{pid}")
 
-            peso_e = st.number_input("Peso unitário (Kg)", min_value=0.1, step=0.001, format="%.3f", value=float(prod_sel.get("peso_kg_unitario", 0.5)), key=f"peso_{pid}")
+            peso_e = st.number_input("Peso unitário (Kg)", min_value=0.001, step=0.001, format="%.3f", value=float(prod_sel.get("peso_kg_unitario", 0.5)), key=f"peso_{pid}")
 
             custo_calc2 = calcular_custo_unitario(tamanho_e, peso_e, parametros)
             preco_venda_calc2 = calcular_preco_venda_estimado(custo_calc2, parametros)
