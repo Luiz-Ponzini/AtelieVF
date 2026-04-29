@@ -155,6 +155,6 @@ with col2:
     if produtos:
         df = pd.DataFrame(produtos)
         colunas = ["nome", "tipo_peca", "tamanho", "peso_kg_unitario", "custo_unitario", "preco_venda_estimado", "estoque_atual", "ativo"]
-        st.dataframe(df[colunas], width="stretch", hide_index=True)
+        st.dataframe(df[colunas], width="stretch", height = "stretch", hide_index=True)
     else:
         st.info("Nenhum produto cadastrado.")
